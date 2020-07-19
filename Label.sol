@@ -40,17 +40,19 @@ contract Label is ERC20Interface, OwnerHelper
     uint public tokenIssuedRsv;
     uint public tokenIssuedTeam;
     uint public tokenIssuedAdv;
-        
+    
     uint public burnTokenSupply;
     
     mapping (address => uint) public balances;
     mapping (address => mapping ( address => uint )) public approvals;
+
+    mapping (address => uint) public lockWallet;
     
     mapping (uint => uint) public tmVestingTimer;
     mapping (uint => uint) public tmVestingBalances;
     mapping (uint => uint) public advVestingTimer;
     mapping (uint => uint) public advVestingBalances;
-    
+        
     bool public tokenLock = true;
     bool public saleTime = true;
     uint public endSaleTime = 0;
@@ -65,7 +67,7 @@ contract Label is ERC20Interface, OwnerHelper
 
     event Burn(address indexed _from, uint _tokens);
     
-    event TokenUnlock(address indexed _to, uint _tokens);
+    event TokenUnLock(address indexed _to, uint _tokens);
     event EndSale(uint _date);
     
     constructor() public
@@ -87,8 +89,6 @@ contract Label is ERC20Interface, OwnerHelper
 
         burnTokenSupply     = 0;
         
-        require(maxTeamSupply == teamVestingSupply.mul(teamVestingTime));
-        require(maxAdvisorSupply == advisorVestingSupply.mul(advisorVestingTime));
         require(maxTotalSupply == maxSaleSupply + maxDevSupply + maxMktSupply + maxEcoSupply + maxReserveSupply + maxTeamSupply + maxAdvisorSupply);
     }
 
@@ -99,7 +99,11 @@ contract Label is ERC20Interface, OwnerHelper
     
     function balanceOf(address _who) view public returns (uint) 
     {
-        return balances[_who];
+        uint balance = balances[_who];
+        
+        balance = balance.add(lockWallet[_who]);
+        
+        return balance;
     }
     
     function transfer(address _to, uint _value) public returns (bool) 
@@ -244,47 +248,33 @@ contract Label is ERC20Interface, OwnerHelper
         emit RsvIssue(_to, tokens);
     }
 
-    function teamIssue(address _to, uint _time) onlyOwner public
+    function teamIssue(address _to) onlyOwner public
     {
         require(saleTime == false);
-        require( _time < teamVestingTime);
+        require(tokenIssuedTeam == 0);
         
-        uint nowTime = now;
-        require( nowTime > tmVestingTimer[_time] );
-        
-        uint tokens = teamVestingSupply;
+        uint tokens = maxTeamSupply;
 
-        require(tokens == tmVestingBalances[_time]);
-        require(maxTeamSupply >= tokenIssuedTeam.add(tokens));
-        
         balances[msg.sender] = balances[msg.sender].sub(tokens);
-        balances[_to] = balances[_to].add(tokens);
-        tmVestingBalances[_time] = 0;
+
+        lockWallet[_to]    = lockWallet[_to].add(maxTeamSupply);
         
-        totalTokenSupply = totalTokenSupply.add(tokens);
         tokenIssuedTeam = tokenIssuedTeam.add(tokens);
-        
+                
         emit TeamIssue(_to, tokens);
     }
 
-    function advisorIssue(address _to, uint _time) onlyOwner public
+    function advisorIssue(address _to) onlyOwner public
     {
         require(saleTime == false);
-        require( _time < advisorVestingTime);
+        require(tokenIssuedAdv == 0);
         
-        uint nowTime = now;
-        require( nowTime > advVestingTimer[_time] );
-        
-        uint tokens = advisorVestingSupply;
+        uint tokens = maxAdvisorSupply;
 
-        require(tokens == advVestingBalances[_time]);
-        require(maxAdvisorSupply >= tokenIssuedAdv.add(tokens));
-        
         balances[msg.sender] = balances[msg.sender].sub(tokens);
-        balances[_to] = balances[_to].add(tokens);
-        advVestingBalances[_time] = 0;
-        
-        totalTokenSupply = totalTokenSupply.add(tokens);
+
+        lockWallet[_to]    = lockWallet[_to].add(maxAdvisorSupply);
+
         tokenIssuedAdv = tokenIssuedAdv.add(tokens);
         
         emit AdvIssue(_to, tokens);
@@ -308,13 +298,54 @@ contract Label is ERC20Interface, OwnerHelper
         
         for(uint i = 0; i < advisorVestingTime; i++)
         {
-            advVestingTimer[i] = endSaleTime + advisorVestingLockDate + (3 * i * month);
+            advVestingTimer[i] = endSaleTime + advisorVestingLockDate + (i * advisorVestingLockDate);
             advVestingBalances[i] = advisorVestingSupply;
         }
         
         emit EndSale(endSaleTime);
     }
     
+    function teamUnlock(address _to, uint _time) onlyManager public
+    {
+        require(saleTime == false);
+        require( _time < teamVestingTime);
+        
+        uint nowTime = now;
+        require( nowTime > tmVestingTimer[_time] );
+        
+        uint tokens = teamVestingSupply;
+
+        require(tokens == tmVestingBalances[_time]);
+        require(lockWallet[_to] > 0);
+        
+        balances[_to] = balances[_to].add(tokens);
+        tmVestingBalances[_time] = 0;
+        lockWallet[_to] = lockWallet[_to].sub(tokens);
+        
+        emit TokenUnLock(_to, tokens);
+    }
+
+    function advisorUnlock(address _to, uint _time) onlyManager public
+    {
+        require(saleTime == false);
+        require( _time < advisorVestingTime);
+        
+        uint nowTime = now;
+        require( nowTime > advVestingTimer[_time] );
+        
+        uint tokens = advisorVestingSupply;
+
+        require(tokens == advVestingBalances[_time]);
+        require(lockWallet[_to] > 0);
+        
+        balances[_to] = balances[_to].add(tokens);
+        advVestingBalances[_time] = 0;
+        lockWallet[_to] = lockWallet[_to].sub(tokens);
+        
+        emit TokenUnLock(_to, tokens);
+    }
+
+
     function transferAnyERC20Token(address tokenAddress, uint tokens) onlyOwner public returns (bool success)
     {
         return ERC20Interface(tokenAddress).transfer(manager, tokens);
